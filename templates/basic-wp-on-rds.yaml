@@ -1,0 +1,226 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: A very basic Cloud Services implementation for my Network Infrastructure course Because of tight budget, "Port Hills Thrills" only need one compute instance, and one decoupled database. Resilience of compute is not expected, therefore there is no scaling, load balancing or multiple EC2s across AZs.
+
+Parameters:
+  KeyName:
+    Description: Name of an existing EC2 KeyPair to enable SSH access to the instances
+    Type: 'AWS::EC2::KeyPair::KeyName'
+    Default: 'CapstoneKey' # Replace with your key pair name
+    ConstraintDescription: must be the name of an existing EC2 KeyPair.
+  DBName:
+    Default: wordpressdb
+    Description: The WordPress database name
+    Type: String
+    MinLength: '1'
+    MaxLength: '64'
+    AllowedPattern: '[a-zA-Z][a-zA-Z0-9]*'
+    ConstraintDescription: must begin with a letter and contain only alphanumeric characters.
+  DBUser:
+    NoEcho: 'true'
+    Description: The WordPress database admin account username
+    Type: String
+    MinLength: '1'
+    MaxLength: '16'
+    AllowedPattern: '[a-zA-Z][a-zA-Z0-9]*'
+    ConstraintDescription: must begin with a letter and contain only alphanumeric characters.
+  DBPassword:
+    NoEcho: 'true'
+    Description: The WordPress database admin account password
+    Type: String
+    MinLength: '8'
+    MaxLength: '41'
+    AllowedPattern: '[a-zA-Z0-9]*'
+    ConstraintDescription: must contain only alphanumeric characters.
+
+Resources:
+  # Network Resources
+  MyVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: '10.0.0.0/16'
+      Tags:
+        - Key: 'Name'
+          Value: 'MyVPC'
+  InternetGateway:
+    Type: 'AWS::EC2::InternetGateway'
+  VPCGatewayAttachment:
+    Type: 'AWS::EC2::VPCGatewayAttachment'
+    Properties:
+      VpcId: !Ref MyVPC
+      InternetGatewayId: !Ref InternetGateway
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref MyVPC
+      CidrBlock: '10.0.1.0/24'
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: 'us-east-1a'
+      Tags:
+        - Key: 'Name'
+          Value: 'PublicSubnet'
+  PublicRouteTable:
+    Type: 'AWS::EC2::RouteTable'
+    Properties:
+      VpcId: !Ref MyVPC
+  PublicRoute:
+    Type: 'AWS::EC2::Route'
+    DependsOn: VPCGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: '0.0.0.0/0'
+      GatewayId: !Ref InternetGateway
+  PublicSubnetRouteTableAssociation:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      SubnetId: !Ref PublicSubnet
+      RouteTableId: !Ref PublicRouteTable
+  PrivateSubnet:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      VpcId: !Ref MyVPC
+      CidrBlock: '10.0.2.0/24'
+      AvailabilityZone: 'us-east-1b'
+      Tags:
+        - Key: 'Name'
+          Value: 'PrivateSubnet'
+  PrivateRouteTable:
+    Type: 'AWS::EC2::RouteTable'
+    Properties:
+      VpcId: !Ref MyVPC
+      Tags:
+        - Key: 'Name'
+          Value: 'PrivateRouteTable'
+  PrivateSubnetRouteTableAssociation:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      SubnetId: !Ref PrivateSubnet
+      RouteTableId: !Ref PrivateRouteTable
+  # NAT Getway for Private Subnet to access internet
+  EIPForNATGateway:
+    Type: 'AWS::EC2::EIP'
+    DependsOn: VPCGatewayAttachment
+  NATGateway:
+    Type: 'AWS::EC2::NatGateway'
+    Properties:
+      AllocationId: !GetAtt EIPForNATGateway.AllocationId
+      SubnetId: !Ref PublicSubnet
+  PrivateRoute:
+    Type: 'AWS::EC2::Route'
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      DestinationCidrBlock: '0.0.0.0/0'
+      NatGatewayId: !Ref NATGateway
+  DBSubnetGroup:
+    Type: 'AWS::RDS::DBSubnetGroup'
+    Properties:
+      DBSubnetGroupDescription: 'Subnet group for RDS instance'
+      SubnetIds:
+        - !Ref PrivateSubnet
+        - !Ref PublicSubnet
+
+  ## Security Resources  ##
+  WebServerSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: Enable HTTP access via port 80 + SSH access
+      VpcId: !Ref MyVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '80'
+          ToPort: '80'
+          CidrIp: '0.0.0.0/0'
+        - IpProtocol: tcp
+          FromPort: '22'
+          ToPort: '22'
+          CidrIp: '0.0.0.0/0'
+      Tags:
+        - Key: 'Name'
+          Value: 'WebServerSecurityGroup'
+
+  DBSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: Open database for access from web server
+      VpcId: !Ref MyVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '3306'
+          ToPort: '3306'
+          SourceSecurityGroupId: !Ref WebServerSecurityGroup
+
+  ## Compute Resources ##
+  WordpressWebServer:
+    Type: 'AWS::EC2::Instance'
+    DependsOn: DBInstance
+    Properties:
+      IamInstanceProfile: 'LabInstanceProfile'
+      ImageId: ami-0e1c5d8c23330dee3
+      InstanceType: t2.micro
+      SubnetId: !Ref PublicSubnet
+      SecurityGroupIds:
+        - !Ref WebServerSecurityGroup
+      KeyName: !Ref KeyName
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          yum update -y
+          yum install -y httpd
+          amazon-linux-extras install -y lamp-mariadb10.2-php7.2 php7.2
+          yum install -y php php-mysqlnd
+
+          # Start and enable Apache
+          systemctl start httpd
+          systemctl enable httpd
+
+          # Download and unpack WordPress
+          wget https://wordpress.org/latest.tar.gz
+          tar -xzf latest.tar.gz
+          mv wordpress/* /var/www/html/
+
+          # Fetch RDS Endpoint
+          DB_ENDPOINT=$(aws rds describe-db-instances --region ${AWS::Region} --db-instance-identifier ${DBName} --query "DBInstances[0].Endpoint.Address" --output text)
+
+          # Set up the WordPress configuration
+          cd /var/www/html/
+          cp wp-config-sample.php wp-config.php
+          sed -i 's/database_name_here/${DBName}/g' wp-config.php
+          sed -i 's/username_here/${DBUser}/g' wp-config.php
+          sed -i 's/password_here/${DBPassword}/g' wp-config.php
+          sed -i 's/localhost/'${!DB_ENDPOINT}'/g' wp-config.php
+
+          # Allow WordPress to manage its own updates
+          sudo chown -R apache:apache wp-content
+          echo "define('FS_METHOD', 'direct');" >> wp-config.php
+
+          # Cleanup
+          rm -rf wordpress latest.tar.gz
+      Tags:
+        - Key: 'Name'
+          Value: 'WordpressWebServer'
+
+  DBInstance:
+    Type: 'AWS::RDS::DBInstance'
+    Properties:
+      DBName: !Ref DBName
+      DBInstanceIdentifier: !Ref DBName
+      Engine: mysql # lowercase sensitive for learner lab
+      MultiAZ: false
+      MasterUsername: !Ref DBUser
+      MasterUserPassword: !Ref DBPassword
+      DBInstanceClass: db.t4g.micro
+      AllocatedStorage: '5'
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      VPCSecurityGroups:
+        - !GetAtt
+          - DBSecurityGroup
+          - GroupId
+
+Outputs:
+  WebsiteURL:
+    Description: URL for newly created WordPress website
+    Value: !Sub 'http://${WordpressWebServer.PublicIp}/wordpress'
+  DBAddress:
+    Description: Newly created RDS database address
+    Value: !GetAtt
+      - DBInstance
+      - Endpoint.Address
