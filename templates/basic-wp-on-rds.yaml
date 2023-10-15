@@ -33,7 +33,10 @@ Parameters:
     ConstraintDescription: must contain only alphanumeric characters.
 
 Resources:
-  # Network Resources
+  #######################
+  ## Network Resources ##
+  #######################
+
   MyVPC:
     Type: AWS::EC2::VPC
     Properties:
@@ -41,6 +44,7 @@ Resources:
       Tags:
         - Key: 'Name'
           Value: 'MyVPC'
+
   InternetGateway:
     Type: 'AWS::EC2::InternetGateway'
   VPCGatewayAttachment:
@@ -48,6 +52,7 @@ Resources:
     Properties:
       VpcId: !Ref MyVPC
       InternetGatewayId: !Ref InternetGateway
+
   PublicSubnet:
     Type: AWS::EC2::Subnet
     Properties:
@@ -58,6 +63,7 @@ Resources:
       Tags:
         - Key: 'Name'
           Value: 'PublicSubnet'
+
   PublicRouteTable:
     Type: 'AWS::EC2::RouteTable'
     Properties:
@@ -74,15 +80,27 @@ Resources:
     Properties:
       SubnetId: !Ref PublicSubnet
       RouteTableId: !Ref PublicRouteTable
-  PrivateSubnet:
+
+  PrivateSubnet1:
     Type: 'AWS::EC2::Subnet'
     Properties:
       VpcId: !Ref MyVPC
       CidrBlock: '10.0.2.0/24'
+      AvailabilityZone: 'us-east-1a'
+      Tags:
+        - Key: 'Name'
+          Value: 'PrivateSubnet1'
+
+  PrivateSubnet2:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      VpcId: !Ref MyVPC
+      CidrBlock: '10.0.3.0/24'
       AvailabilityZone: 'us-east-1b'
       Tags:
         - Key: 'Name'
-          Value: 'PrivateSubnet'
+          Value: 'PrivateSubnet2'
+
   PrivateRouteTable:
     Type: 'AWS::EC2::RouteTable'
     Properties:
@@ -90,12 +108,25 @@ Resources:
       Tags:
         - Key: 'Name'
           Value: 'PrivateRouteTable'
-  PrivateSubnetRouteTableAssociation:
+  PrivateRoute:
+    Type: 'AWS::EC2::Route'
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      DestinationCidrBlock: '0.0.0.0/0'
+      NatGatewayId: !Ref NATGateway
+
+  PrivateSubnetRouteTableAssociation1:
     Type: 'AWS::EC2::SubnetRouteTableAssociation'
     Properties:
-      SubnetId: !Ref PrivateSubnet
+      SubnetId: !Ref PrivateSubnet1
       RouteTableId: !Ref PrivateRouteTable
-  # NAT Getway for Private Subnet to access internet
+  PrivateSubnetRouteTableAssociation2:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      SubnetId: !Ref PrivateSubnet2
+      RouteTableId: !Ref PrivateRouteTable
+
+  # NAT Getway for Private Subnet to access internet for updates, patches, etc.
   EIPForNATGateway:
     Type: 'AWS::EC2::EIP'
     DependsOn: VPCGatewayAttachment
@@ -104,21 +135,19 @@ Resources:
     Properties:
       AllocationId: !GetAtt EIPForNATGateway.AllocationId
       SubnetId: !Ref PublicSubnet
-  PrivateRoute:
-    Type: 'AWS::EC2::Route'
-    Properties:
-      RouteTableId: !Ref PrivateRouteTable
-      DestinationCidrBlock: '0.0.0.0/0'
-      NatGatewayId: !Ref NATGateway
+
+  # DB Subnet Group for RDS instance to use private subnets in two AZs
   DBSubnetGroup:
     Type: 'AWS::RDS::DBSubnetGroup'
     Properties:
       DBSubnetGroupDescription: 'Subnet group for RDS instance'
       SubnetIds:
-        - !Ref PrivateSubnet
-        - !Ref PublicSubnet
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
 
+  #########################
   ## Security Resources  ##
+  #########################
   WebServerSecurityGroup:
     Type: 'AWS::EC2::SecurityGroup'
     Properties:
@@ -132,7 +161,7 @@ Resources:
         - IpProtocol: tcp
           FromPort: '22'
           ToPort: '22'
-          CidrIp: '0.0.0.0/0'
+          CidrIp: '0.0.0.0/0' # Replace with an IP range that you will be connecting from
       Tags:
         - Key: 'Name'
           Value: 'WebServerSecurityGroup'
@@ -148,13 +177,15 @@ Resources:
           ToPort: '3306'
           SourceSecurityGroupId: !Ref WebServerSecurityGroup
 
+  #######################
   ## Compute Resources ##
+  #######################
   WordpressWebServer:
     Type: 'AWS::EC2::Instance'
     DependsOn: DBInstance
     Properties:
       IamInstanceProfile: 'LabInstanceProfile'
-      ImageId: ami-0e1c5d8c23330dee3
+      ImageId: ami-0e1c5d8c23330dee3 # AMI muust be in the same region as the stack
       InstanceType: t2.micro
       SubnetId: !Ref PublicSubnet
       SecurityGroupIds:
@@ -191,6 +222,13 @@ Resources:
           # Allow WordPress to manage its own updates
           sudo chown -R apache:apache wp-content
           echo "define('FS_METHOD', 'direct');" >> wp-config.php
+
+          # Add Salt to wp-config.php
+          curl --http1.1 https://api.wordpress.org/secret-key/1.1/salt/ > /tmp/salt.txt
+          cat /tmp/salt.txt >> wp-config.php
+
+          # Restart Apache
+          systemctl restart httpd
 
           # Cleanup
           rm -rf wordpress latest.tar.gz
