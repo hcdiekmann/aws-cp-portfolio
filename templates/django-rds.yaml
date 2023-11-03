@@ -8,8 +8,8 @@ Parameters:
     Default: 'CapstoneKey' # Replace with your key pair name
     ConstraintDescription: must be the name of an existing EC2 KeyPair.
   DBName:
-    Default: wordpressdb
-    Description: The WordPress database name
+    Default: djangodb
+    Description: The RDS name
     Type: String
     MinLength: '1'
     MaxLength: '64'
@@ -17,7 +17,7 @@ Parameters:
     ConstraintDescription: must begin with a letter and contain only alphanumeric characters.
   DBUser:
     NoEcho: 'true'
-    Description: The WordPress database admin account username
+    Description: The RDS admin account username
     Type: String
     MinLength: '1'
     MaxLength: '16'
@@ -25,7 +25,7 @@ Parameters:
     ConstraintDescription: must begin with a letter and contain only alphanumeric characters.
   DBPassword:
     NoEcho: 'true'
-    Description: The WordPress database admin account password
+    Description: The RDS database admin account password
     Type: String
     MinLength: '8'
     MaxLength: '41'
@@ -198,15 +198,15 @@ Resources:
           yum install -y httpd python3 python3-pip python3-venv git
 
           # Clone git repo of django app
-          git clone https://github.com/hcdiekmann/django-booking-system.git /var/www
+          sudo git clone https://github.com/hcdiekmann/django-booking-system.git /var/www
 
-          sudo chown -R apache:apache /var/www/django-booking-system
+          sudo chown -R ec2-user:ec2-user /var/www/django-booking-system
           cd /var/www/django-booking-system
 
           # Set up Python virtual environment and install dependencies
-          python3 -m venv myappenv
+          sudo python3 -m venv myappenv
           source myappenv/bin/activate
-          pip install -r requirements.txt
+          pip3 install Django Pillow pyhton-dotenv wheel
 
 
           # Adjust the Django settings.py to connect to the RDS database
