@@ -194,6 +194,19 @@ Resources:
   #######################
   ## Compute Resources ##
   #######################
+  BastionHost:
+    Type: 'AWS::EC2::Instance'
+    Properties:
+      InstanceType: t2.micro
+      ImageId: ami-0e1c5d8c23330dee3 # specific AMI ID for us-east-1
+      SubnetId: !Ref PublicSubnet
+      SecurityGroupIds:
+        - !Ref BastionHostSecurityGroup
+      KeyName: !Ref KeyName
+      Tags:
+        - Key: 'Name'
+          Value: 'BastionHost'
+
   WordpressWebServer:
     Type: 'AWS::EC2::Instance'
     DependsOn: DBInstance

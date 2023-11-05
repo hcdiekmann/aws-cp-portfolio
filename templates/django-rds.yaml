@@ -194,6 +194,19 @@ Resources:
   #######################
   ## Compute Resources ##
   #######################
+  BastionHost:
+    Type: 'AWS::EC2::Instance'
+    Properties:
+      InstanceType: t2.micro
+      ImageId: ami-0e1c5d8c23330dee3 # specific AMI ID for us-east-1
+      SubnetId: !Ref PublicSubnet
+      SecurityGroupIds:
+        - !Ref BastionHostSecurityGroup
+      KeyName: !Ref KeyName
+      Tags:
+        - Key: 'Name'
+          Value: 'BastionHost'
+
   DjangoWebServer:
     Type: 'AWS::EC2::Instance'
     DependsOn: DBInstance
@@ -219,9 +232,8 @@ Resources:
           # Generate a random SECRET_KEY and write it to a .env file
           echo "SECRET_KEY=$(openssl rand -hex 32)" > /var/www/django-booking-system/.env
 
-          cd /var/www/django-booking-system
-
           # Set up Python virtual environment and install dependencies
+          cd /var/www/django-booking-system
           sudo python3 -m venv myappenv
           source myappenv/bin/activate
           pip3 install -r requirements.txt
@@ -238,10 +250,10 @@ Resources:
 
           python manage.py migrate
           python manage.py collectstatic
-
-          # Fetch the public IP of this instance
-          PUBLIC_IP=$(curl http://169.254.169.254/latest/meta-data/public-ipv4)
-          echo ${!PUBLIC_IP}
+          
+          # Start and enable Apache
+          systemctl start httpd
+          systemctl enable httpd
 
           sudo chown -R apache:apache /var/www/django-booking-system
           sudo find /var/www/django-booking-system -type d -exec chmod 755 {} \;
@@ -264,9 +276,8 @@ Resources:
             </Directory>
           </VirtualHost>" > /etc/httpd/conf.d/django-app.conf 
 
-          # Start and enable Apache
-          systemctl start httpd
-          systemctl enable httpd
+          # Restart Apache
+          systemctl restart httpd
 
       Tags:
         - Key: 'Name'
