@@ -148,6 +148,20 @@ Resources:
   #########################
   ## Security Resources  ##
   #########################
+  BastionHostSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: 'Enable SSH access from specified IP address range'
+      VpcId: !Ref MyVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '22'
+          ToPort: '22'
+          CidrIp: 0.0.0.0/0 # Replace with specific IP address for SSH access
+      Tags:
+        - Key: 'Name'
+          Value: 'BastionHostSecurityGroup'
+
   WebServerSecurityGroup:
     Type: 'AWS::EC2::SecurityGroup'
     Properties:
@@ -161,7 +175,7 @@ Resources:
         - IpProtocol: tcp
           FromPort: '22'
           ToPort: '22'
-          CidrIp: '0.0.0.0/0' # Replace with an IP range that you will be connecting from
+          SourceSecurityGroupId: !Ref BastionHostSecurityGroup
       Tags:
         - Key: 'Name'
           Value: 'WebServerSecurityGroup'
@@ -195,19 +209,22 @@ Resources:
         Fn::Base64: !Sub |
           #!/bin/bash
           yum update -y
-          yum install -y httpd python3 python3-pip python3-venv git
+          yum install -y httpd python3 python3-pip python3-venv git openssl
 
           # Clone git repo of django app
           sudo git clone https://github.com/hcdiekmann/django-booking-system.git /var/www
 
           sudo chown -R ec2-user:ec2-user /var/www/django-booking-system
+
+          # Generate a random SECRET_KEY and write it to a .env file
+          echo "SECRET_KEY=$(openssl rand -hex 32)" > /var/www/django-booking-system/.env
+
           cd /var/www/django-booking-system
 
           # Set up Python virtual environment and install dependencies
           sudo python3 -m venv myappenv
           source myappenv/bin/activate
-          pip3 install Django Pillow pyhton-dotenv wheel
-
+          pip3 install -r requirements.txt
 
           # Adjust the Django settings.py to connect to the RDS database
           DB_ENDPOINT=$(aws rds describe-db-instances --region ${AWS::Region} --db-instance-identifier ${DBName} --query "DBInstances[0].Endpoint.Address" --output text)
@@ -220,12 +237,19 @@ Resources:
           sed -i "s/PORT': ''/PORT': '3306'/g" booking_system/settings.py
 
           python manage.py migrate
-          python manage.py makemigrations
           python manage.py collectstatic
 
+          # Fetch the public IP of this instance
+          PUBLIC_IP=$(curl http://169.254.169.254/latest/meta-data/public-ipv4)
+          echo ${!PUBLIC_IP}
+          
           # Configure Apache to serve the Django application
           echo "<VirtualHost *:80>
-            ServerName ${AWS::Region}.compute.amazonaws.com
+            DocumentRoot /var/www/django-booking-system
+            Alias /static /var/www/django-booking-system/staticfiles
+            <Directory /var/www/django-booking-system/staticfiles>
+              Require all granted
+            </Directory>
             WSGIDaemonProcess django-app python-path=/var/www/django-booking-system python-home=/var/www/django-booking-system/myappenv
             WSGIProcessGroup django-app
             WSGIScriptAlias / /var/www/django-booking-system/booking_system/wsgi.py
@@ -234,7 +258,7 @@ Resources:
                 Require all granted
               </Files>
             </Directory>
-          </VirtualHost>" > /etc/httpd/conf.d/django.conf 
+          </VirtualHost>" > /etc/httpd/conf.d/django-app.conf 
 
           # Start and enable Apache
           systemctl start httpd
