@@ -242,7 +242,11 @@ Resources:
           # Fetch the public IP of this instance
           PUBLIC_IP=$(curl http://169.254.169.254/latest/meta-data/public-ipv4)
           echo ${!PUBLIC_IP}
-          
+
+          sudo chown -R apache:apache /var/www/django-booking-system
+          sudo find /var/www/django-booking-system -type d -exec chmod 755 {} \;
+          sudo find /var/www/django-booking-system -type f -exec chmod 644 {} \;
+
           # Configure Apache to serve the Django application
           echo "<VirtualHost *:80>
             DocumentRoot /var/www/django-booking-system
