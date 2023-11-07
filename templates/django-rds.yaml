@@ -222,61 +222,10 @@ Resources:
         Fn::Base64: !Sub |
           #!/bin/bash
           yum update -y
-          yum install -y httpd python3 python3-pip python3-venv git openssl mysql-devel gcc
+          yum install -y httpd python3 python3-devel python3-pip python3-venv git openssl mysql-devel gcc mod_wsgi
 
           # Clone git repo of django app
           sudo git clone https://github.com/hcdiekmann/django-booking-system.git /var/www
-
-          # Set up Python virtual environment and install dependencies
-          cd /var/www/django-booking-system
-          sudo python3 -m venv myappenv
-          source myappenv/bin/activate
-          sudo chown -R ec2-user:ec2-user /var/www/django-booking-system
-
-          # Generate a random SECRET_KEY and write it to a .env file
-          echo "SECRET_KEY=$(openssl rand -hex 32)" > /var/www/django-booking-system/.env
-          pip install -r requirements.txt
-
-          # Adjust the Django settings.py to connect to the RDS database
-          DB_ENDPOINT=$(aws rds describe-db-instances --region ${AWS::Region} --db-instance-identifier ${DBName} --query "DBInstances[0].Endpoint.Address" --output text)
-          sed -i "s/ALLOWED_HOSTS = \[\]/ALLOWED_HOSTS = \['*'\]/g" booking_system/settings.py
-          sed -i "s/ENGINE': 'django.db.backends.sqlite3'/ENGINE': 'django.db.backends.mysql'/g" booking_system/settings.py
-          sed -i "s/NAME': ''/NAME': '${DBName}'/g" booking_system/settings.py
-          sed -i "s/USER': ''/USER': '${DBUser}'/g" booking_system/settings.py
-          sed -i "s/PASSWORD': ''/PASSWORD': '${DBPassword}'/g" booking_system/settings.py
-          sed -i "s/HOST': ''/HOST': '${!DB_ENDPOINT}'/g" booking_system/settings.py
-          sed -i "s/PORT': ''/PORT': '3306'/g" booking_system/settings.py
-
-          python manage.py migrate
-          python manage.py collectstatic
-          
-          # Start and enable Apache
-          systemctl start httpd
-          systemctl enable httpd
-
-          sudo chown -R apache:apache /var/www/django-booking-system
-          sudo find /var/www/django-booking-system -type d -exec chmod 755 {} \;
-          sudo find /var/www/django-booking-system -type f -exec chmod 644 {} \;
-
-          # Configure Apache to serve the Django application
-          echo "<VirtualHost *:80>
-            DocumentRoot /var/www/django-booking-system
-            Alias /static /var/www/django-booking-system/staticfiles
-            <Directory /var/www/django-booking-system/staticfiles>
-              Require all granted
-            </Directory>
-            WSGIDaemonProcess django-app python-path=/var/www/django-booking-system python-home=/var/www/django-booking-system/myappenv
-            WSGIProcessGroup django-app
-            WSGIScriptAlias / /var/www/django-booking-system/booking_system/wsgi.py
-            <Directory /var/www/django-booking-system/booking_system>
-              <Files wsgi.py>
-                Require all granted
-              </Files>
-            </Directory>
-          </VirtualHost>" > /etc/httpd/conf.d/django-app.conf 
-
-          # Restart Apache
-          systemctl restart httpd
 
       Tags:
         - Key: 'Name'
